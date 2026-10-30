@@ -36,5 +36,6 @@ export const config = {
     "/checkout/:path*",
     "/reservations/new/:path*",
     "/order/confirmation/:path*",
+    "/order/payment/:path*",
   ],
 };

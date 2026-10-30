@@ -107,6 +107,9 @@ export async function placeOrderAction(_state: ShopActionState, formData: FormDa
     }
     redirect(checkoutUrl);
   }
+  if (isQrPaymentMethod(order.paymentMethod)) {
+    redirect(`/order/payment/${encodeURIComponent(created.order_reference)}`);
+  }
   redirect(`/order/confirmation/${encodeURIComponent(created.order_reference)}`);
 }
 
@@ -114,13 +117,22 @@ export async function submitQrPaymentReferenceAction(
   _state: ShopActionState,
   formData: FormData,
 ): Promise<ShopActionState> {
-  const { supabase } = await requireCustomer("/account/orders");
+  const { supabase, user } = await requireCustomer("/account/orders");
   const orderId = text(formData, "order_id");
   const parsed = qrPaymentReferenceSchema.safeParse({
     reference: text(formData, "reference"),
   });
   if (!/^[0-9a-f-]{36}$/i.test(orderId) || !parsed.success) {
     return { error: parsed.success ? "Choose a valid order." : parsed.error.issues[0]?.message ?? "Enter a valid transfer reference." };
+  }
+  const { data: order, error: orderError } = await supabase
+    .from("orders")
+    .select("order_reference")
+    .eq("id", orderId)
+    .eq("customer_id", user.id)
+    .maybeSingle();
+  if (orderError || !order) {
+    return { error: "We could not find that order. Check your order history and try again." };
   }
   const { error } = await supabase.rpc("submit_qr_payment_reference", {
     p_order_id: orderId,
@@ -138,7 +150,8 @@ export async function submitQrPaymentReferenceAction(
   revalidatePath(`/account/orders/${orderId}`);
   revalidatePath("/account/orders");
   revalidatePath(`/admin/orders/${orderId}`);
-  return { success: "Transfer reference saved. The shop will verify the payment." };
+  revalidatePath(`/order/confirmation/${encodeURIComponent(order.order_reference)}`);
+  redirect(`/order/confirmation/${encodeURIComponent(order.order_reference)}`);
 }
 
 export async function startPayMongoPaymentAction(formData: FormData): Promise<never> {
