@@ -2,11 +2,17 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import { ArrowLeft, IceCreamCone } from "lucide-react";
 import { useCart } from "@/components/cart-provider";
 import { T } from "@/components/language-provider";
 import { formatPhp } from "@/lib/money";
+import {
+  beginPurchase,
+  consumePendingPurchase,
+  type PurchaseMode,
+} from "@/lib/pending-purchase";
 import type { Product } from "@/types/database";
 
 type Variant = { id: string; name: string; price_adjustment_cents: number };
@@ -39,7 +45,8 @@ export function ProductDetail({
   basePath?: string;
   workspace?: boolean;
 }) {
-  const { add } = useCart();
+  const { add, isAuthenticated } = useCart();
+  const router = useRouter();
   const [variantId, setVariantId] = useState(variants.length === 0 ? "" : "");
   const [addonIds, setAddonIds] = useState<string[]>([]);
   const [quantity, setQuantity] = useState(1);
@@ -51,6 +58,46 @@ export function ProductDetail({
     (selectedVariant?.price_adjustment_cents ?? 0) +
     selectedAddons.reduce((sum, addon) => sum + addon.price_cents, 0);
   const imageUrl = publicImageUrl(product.image_path);
+  const productPath = `${basePath}/${product.slug}`;
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const pending = consumePendingPurchase(product.id, window.location.pathname);
+    if (!pending) return;
+    add(pending.line, pending.quantity);
+    router.replace(pending.mode === "buy-now" ? "/checkout" : "/cart");
+  }, [add, isAuthenticated, product.id, router]);
+
+  function purchase(mode: PurchaseMode) {
+    const line = {
+      productId: product.id,
+      slug: product.slug,
+      name: product.name,
+      unitPriceCents: unitPrice,
+      variantId: selectedVariant?.id ?? null,
+      variantName: selectedVariant?.name ?? null,
+      addons: selectedAddons.map((addon) => ({
+        id: addon.id,
+        name: addon.name,
+        priceCents: addon.price_cents,
+      })),
+    };
+    if (
+      !beginPurchase({
+        isAuthenticated,
+        returnPath: productPath,
+        productId: product.id,
+        line,
+        quantity,
+        mode,
+      })
+    ) {
+      return;
+    }
+    add(line, quantity);
+    if (mode === "buy-now") router.push("/checkout");
+    else setAdded(true);
+  }
 
   return (
     <section
@@ -187,6 +234,21 @@ export function ProductDetail({
           </div>
           <div className="product-detail-actions">
             <button
+              className="button button-secondary"
+              type="button"
+              disabled={
+                !product.is_available ||
+                (variants.length > 0 && !variantId) ||
+                unitPrice < 0
+              }
+              onClick={() => purchase("add")}
+            >
+              <T
+                en={added ? "Added" : "Add"}
+                fil={added ? "Naidagdag" : "Idagdag"}
+              />
+            </button>
+            <button
               className="button"
               type="button"
               disabled={
@@ -194,32 +256,11 @@ export function ProductDetail({
                 (variants.length > 0 && !variantId) ||
                 unitPrice < 0
               }
-              onClick={() => {
-                add(
-                  {
-                    productId: product.id,
-                    slug: product.slug,
-                    name: product.name,
-                    unitPriceCents: unitPrice,
-                    variantId: selectedVariant?.id ?? null,
-                    variantName: selectedVariant?.name ?? null,
-                    addons: selectedAddons.map((addon) => ({
-                      id: addon.id,
-                      name: addon.name,
-                      priceCents: addon.price_cents,
-                    })),
-                  },
-                  quantity,
-                );
-                setAdded(true);
-              }}
+              onClick={() => purchase("buy-now")}
             >
-              <T
-                en={added ? "Added to cart" : "Add to cart"}
-                fil={added ? "Naidagdag sa cart" : "Idagdag sa cart"}
-              />
+              <T en="Buy now" fil="Bumili ngayon" />
             </button>
-            <Link className="button button-secondary" href="/cart">
+            <Link className="text-link" href="/cart">
               <T en="View cart" fil="Tingnan ang cart" />
             </Link>
           </div>

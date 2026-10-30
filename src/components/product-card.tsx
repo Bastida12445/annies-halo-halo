@@ -2,10 +2,17 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { IceCreamCone } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useCart } from "@/components/cart-provider";
 import { T } from "@/components/language-provider";
+import {
+  beginPurchase,
+  consumePendingPurchase,
+  loginHref,
+  type PurchaseMode,
+} from "@/lib/pending-purchase";
 import { formatPhp } from "@/lib/money";
 import type { Product } from "@/types/database";
 
@@ -26,10 +33,46 @@ export function ProductCard({
   hasOptions?: boolean;
   basePath?: string;
 }) {
-  const { add } = useCart();
+  const { add, isAuthenticated } = useCart();
+  const router = useRouter();
   const [added, setAdded] = useState(false);
   const imageUrl = publicImageUrl(product.image_path);
   const productHref = `${basePath}/${product.slug}`;
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const pending = consumePendingPurchase(product.id, window.location.pathname);
+    if (!pending) return;
+    add(pending.line, pending.quantity);
+    router.replace(pending.mode === "buy-now" ? "/checkout" : "/cart");
+  }, [add, isAuthenticated, product.id, router]);
+
+  function purchase(mode: PurchaseMode) {
+    const line = {
+      productId: product.id,
+      slug: product.slug,
+      name: product.name,
+      unitPriceCents: product.price_cents,
+      variantId: null,
+      variantName: null,
+      addons: [],
+    };
+    if (
+      !beginPurchase({
+        isAuthenticated,
+        returnPath: productHref,
+        productId: product.id,
+        line,
+        quantity: 1,
+        mode,
+      })
+    ) {
+      return;
+    }
+    add(line);
+    if (mode === "buy-now") router.push("/checkout");
+    else setAdded(true);
+  }
 
   return (
     <article className="product-card">
@@ -86,36 +129,44 @@ export function ProductCard({
             <T en="Details" fil="Detalye" />
           </Link>
           {product.is_available && !hasOptions && (
-            <button
-              className="button button-small"
-              type="button"
-              onClick={() => {
-                add({
-                  productId: product.id,
-                  slug: product.slug,
-                  name: product.name,
-                  unitPriceCents: product.price_cents,
-                  variantId: null,
-                  variantName: null,
-                  addons: [],
-                });
-                setAdded(true);
-              }}
-            >
-              {added ? (
-                <T en="Added" fil="Naidagdag" />
-              ) : (
-                <T en="Add" fil="Idagdag" />
-              )}
-            </button>
+            <>
+              <button
+                className="button button-small button-outline"
+                type="button"
+                onClick={() => purchase("add")}
+              >
+                {added ? (
+                  <T en="Added" fil="Naidagdag" />
+                ) : (
+                  <T en="Add" fil="Idagdag" />
+                )}
+              </button>
+              <button
+                className="button button-small"
+                type="button"
+                onClick={() => purchase("buy-now")}
+              >
+                <T en="Buy now" fil="Bumili ngayon" />
+              </button>
+            </>
           )}
           {hasOptions && (
-            <Link
-              className="button button-small button-outline"
-              href={productHref}
-            >
-              <T en="Choose options" fil="Pumili ng opsyon" />
-            </Link>
+            <>
+              <Link
+                className="button button-small button-outline"
+                href={productHref}
+              >
+                <T en="Choose options" fil="Pumili ng opsyon" />
+              </Link>
+              {product.is_available && (
+                <Link
+                  className="button button-small"
+                  href={isAuthenticated ? productHref : loginHref(productHref)}
+                >
+                  <T en="Buy now" fil="Bumili ngayon" />
+                </Link>
+              )}
+            </>
           )}
         </div>
       </div>

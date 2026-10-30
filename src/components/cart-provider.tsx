@@ -26,6 +26,7 @@ type CartContextValue = {
   lines: CartLine[];
   count: number;
   totalCents: number;
+  isAuthenticated: boolean;
   add: (line: NewCartLine, quantity?: number) => void;
   setQuantity: (key: string, quantity: number) => void;
   remove: (key: string) => void;
@@ -124,7 +125,13 @@ function currentLines() {
   return parseCart(getSnapshot());
 }
 
-export function CartProvider({ children }: { children: ReactNode }) {
+export function CartProvider({
+  children,
+  isAuthenticated,
+}: {
+  children: ReactNode;
+  isAuthenticated: boolean;
+}) {
   const snapshot = useSyncExternalStore(
     subscribe,
     getSnapshot,
@@ -180,6 +187,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
     () => ({
       lines,
       count: lines.reduce((sum, line) => sum + line.quantity, 0),
+      isAuthenticated,
       totalCents: lines.reduce(
         (sum, line) => sum + line.unitPriceCents * line.quantity,
         0,
@@ -189,7 +197,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
       remove,
       clear,
     }),
-    [add, clear, lines, remove, setQuantity],
+    [add, clear, isAuthenticated, lines, remove, setQuantity],
   );
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;

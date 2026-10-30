@@ -5,7 +5,6 @@ import { useState } from "react";
 import { Menu, ShoppingBag, UserRound, X } from "lucide-react";
 import { logoutAction } from "@/app/actions/auth";
 import { T, useLanguage } from "@/components/language-provider";
-import { useCart } from "@/components/cart-provider";
 
 type SiteHeaderProps = {
   user: { email?: string } | null;
@@ -15,7 +14,6 @@ type SiteHeaderProps = {
 export function SiteHeader({ user, businessName }: SiteHeaderProps) {
   const [open, setOpen] = useState(false);
   const { locale, toggle } = useLanguage();
-  const { count } = useCart();
 
   const links = [
     { href: "/menu", label: <T en="Menu" fil="Menu" /> },
@@ -85,17 +83,12 @@ export function SiteHeader({ user, businessName }: SiteHeaderProps) {
             </Link>
           ))}
           <Link
-            className="nav-cart"
-            href="/cart"
+            className="nav-buy-now"
+            href={user ? "/menu" : "/login?next=%2Fmenu"}
             onClick={() => setOpen(false)}
           >
             <ShoppingBag size={17} aria-hidden="true" />
-            <T en="Cart" fil="Cart" />
-            {count > 0 && (
-              <span className="cart-count" aria-label={`${count} items`}>
-                {count}
-              </span>
-            )}
+            <T en="Buy now" fil="Bumili ngayon" />
           </Link>
           {user ? (
             <>

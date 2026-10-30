@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
+import { Banknote } from "lucide-react";
 import { useActionState, useMemo, useRef, useState } from "react";
 import { placeOrderAction, type ShopActionState } from "@/app/actions/shop";
 import { useCart } from "@/components/cart-provider";
@@ -9,6 +11,69 @@ import { formatPhp } from "@/lib/money";
 import type { BusinessSettings } from "@/lib/business";
 
 const initialState: ShopActionState = {};
+type PaymentMethod = BusinessSettings["payment_methods"][number];
+type FulfillmentMethod = "pickup" | "delivery";
+
+function getAllowedPaymentMethods(
+  methods: BusinessSettings["payment_methods"],
+  fulfillment: FulfillmentMethod,
+) {
+  return methods.filter((method) =>
+    fulfillment === "pickup"
+      ? method === "cash_on_pickup" ||
+        method === "paymongo" ||
+        method === "gcash_qr" ||
+        method === "paymaya_qr"
+      : method === "cash_on_delivery" ||
+        method === "paymongo" ||
+        method === "gcash_qr" ||
+        method === "paymaya_qr",
+  );
+}
+
+function PaymentMethodBrand({ method }: { method: PaymentMethod }) {
+  if (method === "cash_on_pickup" || method === "cash_on_delivery") {
+    return (
+      <span className="payment-brand payment-brand-cash" aria-hidden="true">
+        <Banknote size={26} strokeWidth={1.8} />
+      </span>
+    );
+  }
+
+  const logo =
+    method === "gcash_qr"
+      ? {
+          src: "/payment-logos/gcash.svg",
+          alt: "GCash logo",
+          width: 72,
+          height: 61,
+        }
+      : method === "paymaya_qr"
+        ? {
+            src: "/payment-logos/maya.svg",
+            alt: "Maya logo",
+            width: 112,
+            height: 33,
+          }
+        : {
+            src: "/payment-logos/paymongo.svg",
+            alt: "PayMongo logo",
+            width: 234,
+            height: 40,
+          };
+
+  return (
+    <span className={`payment-brand payment-brand-${method}`}>
+      <Image
+        src={logo.src}
+        alt={logo.alt}
+        width={logo.width}
+        height={logo.height}
+        unoptimized
+      />
+    </span>
+  );
+}
 
 export function CheckoutForm({
   settings,
@@ -38,15 +103,15 @@ export function CheckoutForm({
   );
   const fee = fulfillment === "delivery" ? (selectedArea?.fee_cents ?? 0) : 0;
   const estimatedTotal = cart.totalCents + fee;
-  const allowedPaymentMethods = settings.payment_methods.filter((method) =>
-    fulfillment === "pickup"
-      ? method === "cash_on_pickup" || method === "paymongo" || method === "gcash_qr" || method === "paymaya_qr"
-      : method === "cash_on_delivery" || method === "paymongo" || method === "gcash_qr" || method === "paymaya_qr",
+  const allowedPaymentMethods = getAllowedPaymentMethods(
+    settings.payment_methods,
+    fulfillment,
   );
   const hasManualQrPayment = allowedPaymentMethods.some(
     (method) => method === "gcash_qr" || method === "paymaya_qr",
   );
   const defaultPaymentMethod = allowedPaymentMethods[0] ?? "";
+  const [paymentMethod, setPaymentMethod] = useState(defaultPaymentMethod);
   const items = useMemo(
     () =>
       JSON.stringify(
@@ -131,9 +196,21 @@ export function CheckoutForm({
             id="fulfillment"
             name="fulfillment_method"
             value={fulfillment}
-            onChange={(event) =>
-              setFulfillment(event.target.value as "pickup" | "delivery")
-            }
+            onChange={(event) => {
+              const nextFulfillment = event.target.value as
+                | "pickup"
+                | "delivery";
+              const nextMethods = getAllowedPaymentMethods(
+                settings.payment_methods,
+                nextFulfillment,
+              );
+              setFulfillment(nextFulfillment);
+              setPaymentMethod((current) =>
+                nextMethods.includes(current as PaymentMethod)
+                  ? current
+                  : (nextMethods[0] ?? ""),
+              );
+            }}
           >
             <option value="pickup" disabled={!canPickup}>
               <T en="Pickup" fil="Pickup" />
@@ -229,32 +306,75 @@ export function CheckoutForm({
           <T en="Payment" fil="Pagbabayad" />
         </h2>
         {paymentAvailable ? (
-          <div className="field">
-            <label htmlFor="payment_method">
+          <fieldset className="payment-method-fieldset">
+            <legend className="field-label">
               <T en="Payment method" fil="Paraan ng pagbabayad" />
-            </label>
-            <select
-              id="payment_method"
-              name="payment_method"
-              defaultValue={defaultPaymentMethod}
-            >
+            </legend>
+            <div className="payment-method-grid">
               {allowedPaymentMethods.map((method) => (
-                <option key={method} value={method}>
-                  {method === "cash_on_pickup" ? (
-                    <T en="Cash on pickup" fil="Cash sa pickup" />
-                  ) : method === "cash_on_delivery" ? (
-                    <T en="Cash on delivery" fil="Cash sa delivery" />
-                  ) : method === "paymongo" ? (
-                    <T en={`Pay online with PayMongo (${settings.paymongo_payment_methods.join(", ")})`} fil={`Magbayad online gamit ang PayMongo (${settings.paymongo_payment_methods.join(", ")})`} />
-                  ) : method === "gcash_qr" ? (
-                    <T en="GCash QR payment" fil="Bayad gamit ang GCash QR" />
-                  ) : (
-                    <T en="Maya / PayMaya QR payment" fil="Bayad gamit ang Maya / PayMaya QR" />
-                  )}
-                </option>
+                <label
+                  className={`payment-method-card${paymentMethod === method ? " is-selected" : ""}`}
+                  key={method}
+                >
+                  <input
+                    type="radio"
+                    name="payment_method"
+                    value={method}
+                    checked={paymentMethod === method}
+                    onChange={() => setPaymentMethod(method)}
+                    required
+                  />
+                  <PaymentMethodBrand method={method} />
+                  <span className="payment-method-copy">
+                    <strong>
+                      {method === "cash_on_pickup" ? (
+                        <T en="Cash on pickup" fil="Cash sa pickup" />
+                      ) : method === "cash_on_delivery" ? (
+                        <T en="Cash on delivery" fil="Cash sa delivery" />
+                      ) : method === "paymongo" ? (
+                        <T
+                          en="Pay online with PayMongo"
+                          fil="Magbayad online gamit ang PayMongo"
+                        />
+                      ) : method === "gcash_qr" ? (
+                        <T en="GCash QR payment" fil="Bayad gamit ang GCash QR" />
+                      ) : (
+                        <T
+                          en="Maya / PayMaya QR payment"
+                          fil="Bayad gamit ang Maya / PayMaya QR"
+                        />
+                      )}
+                    </strong>
+                    <small>
+                      {method === "cash_on_pickup" ? (
+                        <T en="Pay when you pick up your order." fil="Magbayad pag kuha ng order." />
+                      ) : method === "cash_on_delivery" ? (
+                        <T
+                          en="Pay when your order is delivered."
+                          fil="Magbayad pag na-deliver ang order."
+                        />
+                      ) : method === "paymongo" ? (
+                        <T
+                          en={`Secure checkout${settings.paymongo_payment_methods.length ? ` · ${settings.paymongo_payment_methods.join(", ")}` : ""}`}
+                          fil={`Secure na checkout${settings.paymongo_payment_methods.length ? ` · ${settings.paymongo_payment_methods.join(", ")}` : ""}`}
+                        />
+                      ) : method === "gcash_qr" ? (
+                        <T
+                          en="Scan the shop QR after placing your order."
+                          fil="I-scan ang QR ng tindahan pagkatapos mag-order."
+                        />
+                      ) : (
+                        <T
+                          en="Scan the shop QR after placing your order."
+                          fil="I-scan ang QR ng tindahan pagkatapos mag-order."
+                        />
+                      )}
+                    </small>
+                  </span>
+                </label>
               ))}
-            </select>
-          </div>
+            </div>
+          </fieldset>
         ) : (
           <p className="form-notice">
             <T

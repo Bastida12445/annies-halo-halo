@@ -42,7 +42,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
     <html lang="en">
       <body>
         <LanguageProvider>
-          <CartProvider>
+          <CartProvider isAuthenticated={Boolean(user)}>
             <SiteHeader
               user={user}
               businessName={settings.business_name}
