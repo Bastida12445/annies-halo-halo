@@ -1,242 +1,61 @@
 import Link from "next/link";
 import type { Metadata } from "next";
-import { AdminActionForm } from "@/components/admin-action-form";
+import { Eye, FolderOpen, Package, Plus, ShoppingBag, Sparkles, Star, Tags } from "lucide-react";
 import { AdminShell } from "@/components/admin-shell";
-import { saveCategoryAction, saveProductAction } from "@/app/actions/shop";
+import { AdminProductTable, type AdminProductRow } from "@/components/admin-product-table";
 import { requireStaff } from "@/lib/auth";
-import { formatPhp } from "@/lib/money";
 
 export const metadata: Metadata = { title: "Menu and products" };
 
-export default async function AdminProductsPage() {
+export default async function AdminProductsPage({ searchParams }: PageProps<"/admin/products">) {
+  const params = await searchParams;
   const { supabase, roles } = await requireStaff(["administrator", "menu_manager"]);
-  const [{ data: products, error }, { data: categories }] = await Promise.all([
-    supabase
-      .from("products")
-      .select("*")
-      .order("updated_at", { ascending: false }),
-    supabase.from("categories").select("*").order("sort_order").order("name"),
+  const [productResult, categoryResult] = await Promise.all([
+    supabase.from("products").select("*").order("updated_at", { ascending: false }),
+    supabase.from("categories").select("id,name").order("sort_order").order("name"),
   ]);
+  const products = productResult.data ?? [];
+  const categories = categoryResult.data ?? [];
+  const categoryMap = new Map(categories.map((category) => [category.id, category.name]));
+  const rows: AdminProductRow[] = products.map((product) => ({
+    ...product,
+    categoryName: product.category_id ? categoryMap.get(product.category_id) ?? null : null,
+    imageUrl: product.image_path
+      ? supabase.storage.from("menu").getPublicUrl(product.image_path).data.publicUrl
+      : null,
+  }));
+  const stats = [
+    { label: "Total products", value: productResult.error ? "—" : products.length.toLocaleString("en-PH"), detail: "Menu items in your catalog", icon: Package, tone: "purple" },
+    { label: "Active on menu", value: productResult.error ? "—" : products.filter((item) => item.is_active).length.toLocaleString("en-PH"), detail: "Visible to customers", icon: Eye, tone: "blue" },
+    { label: "Available to order", value: productResult.error ? "—" : products.filter((item) => item.is_available).length.toLocaleString("en-PH"), detail: "Can be added to a cart", icon: ShoppingBag, tone: "green" },
+    { label: "Featured products", value: productResult.error ? "—" : products.filter((item) => item.is_featured).length.toLocaleString("en-PH"), detail: "Highlighted on the homepage", icon: Star, tone: "pink" },
+  ];
+
   return (
-    <AdminShell title="Menu & products" roles={roles}>
-      <div className="content-card">
-        <h2>Add a product</h2>
-        <AdminActionForm
-          action={saveProductAction}
-          submitLabel="Add product"
-          className="form-stack"
-        >
-          <label className="field-label">
-            Product name
-            <input name="name" required minLength={2} maxLength={120} />
-          </label>
-          <label className="field-label">
-            URL slug
-            <input
-              name="slug"
-              required
-              pattern="[a-z0-9]+(-[a-z0-9]+)*"
-              placeholder="classic-halo-halo"
-            />
-          </label>
-          <label className="field-label">
-            Category
-            <select name="category_id">
-              <option value="">Uncategorized</option>
-              {(categories ?? []).map((category) => (
-                <option value={category.id} key={category.id}>
-                  {category.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field-label">
-            Description
-            <textarea name="description" rows={3} maxLength={2000} />
-          </label>
-          <label className="field-label">
-            Price in centavos
-            <input
-              type="number"
-              name="price_cents"
-              required
-              min={0}
-              max={10000000}
-              step={1}
-            />
-          </label>
-          <label className="field-label">
-            Menu sort order
-            <input
-              type="number"
-              name="sort_order"
-              defaultValue="0"
-              min={0}
-              max={10000}
-              step={1}
-            />
-          </label>
-          <label className="field-label">
-            Product photo
-            <input
-              type="file"
-              name="image"
-              accept="image/jpeg,image/png,image/webp,image/avif"
-            />
-            <small>JPEG, PNG, WebP, or AVIF. Up to 5 MB.</small>
-          </label>
-          <div className="check-row">
-            <label>
-              <input type="checkbox" name="is_active" /> Show on public menu
-            </label>
-            <label>
-              <input type="checkbox" name="is_available" /> Available to order
-            </label>
-            <label>
-              <input type="checkbox" name="is_featured" /> Feature on homepage
-            </label>
+    <AdminShell hideHeading title="Menu & products" roles={roles}>
+      <div className="admin-catalog-page">
+        <header className="admin-catalog-header">
+          <div className="admin-catalog-title-wrap">
+            <span className="admin-page-icon"><FolderOpen aria-hidden="true" size={25} /></span>
+            <div><span className="admin-section-eyebrow">Storefront catalog</span><h1>Menu &amp; products</h1><p>Manage your products, categories, pricing, and menu availability.</p></div>
           </div>
-        </AdminActionForm>
-      </div>
-      <div className="content-card">
-        <h2>Products</h2>
-        {error && <p className="form-error">Products could not be loaded.</p>}
-        {products?.length ? (
-          <div className="data-table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Product</th>
-                  <th>Category</th>
-                  <th>Price</th>
-                  <th>Menu</th>
-                  <th>Availability</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {products.map((product) => (
-                  <tr key={product.id}>
-                    <td>
-                      {product.name}
-                      <small className="table-subline">/{product.slug}</small>
-                    </td>
-                    <td>
-                      {categories?.find(
-                        (category) => category.id === product.category_id,
-                      )?.name ?? "—"}
-                    </td>
-                    <td>{formatPhp(product.price_cents)}</td>
-                    <td>{product.is_active ? "Visible" : "Hidden"}</td>
-                    <td>
-                      {product.is_available ? "Available" : "Unavailable"}
-                    </td>
-                    <td>
-                      <Link
-                        className="text-link"
-                        href={`/admin/products/${product.id}`}
-                      >
-                        Edit
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="admin-catalog-header-actions">
+            <Link className="admin-secondary-action" href="/admin/products/categories"><Tags aria-hidden="true" size={17} />Categories</Link>
+            <Link className="admin-primary-action" href="/admin/products/new"><Plus aria-hidden="true" size={17} />Add product</Link>
           </div>
-        ) : !error ? (
-          <p>No menu products have been added.</p>
-        ) : null}
-      </div>
-      <div className="content-card">
-        <h2>Categories</h2>
-        <div className="category-list">
-          {(categories ?? []).map((category) => (
-            <details key={category.id}>
-              <summary>
-                {category.name} {category.is_active ? "· active" : "· hidden"}
-              </summary>
-              <AdminActionForm
-                action={saveCategoryAction}
-                submitLabel="Save category"
-                className="form-stack"
-              >
-                <input type="hidden" name="id" value={category.id} />
-                <label className="field-label">
-                  Name
-                  <input name="name" defaultValue={category.name} required />
-                </label>
-                <label className="field-label">
-                  Slug
-                  <input
-                    name="slug"
-                    defaultValue={category.slug}
-                    required
-                    pattern="[a-z0-9]+(-[a-z0-9]+)*"
-                  />
-                </label>
-                <label className="field-label">
-                  Description
-                  <input
-                    name="description"
-                    defaultValue={category.description ?? ""}
-                    maxLength={500}
-                  />
-                </label>
-                <label className="field-label">
-                  Sort order
-                  <input
-                    type="number"
-                    name="sort_order"
-                    defaultValue={category.sort_order}
-                    min={0}
-                    max={10000}
-                  />
-                </label>
-                <label>
-                  <input
-                    type="checkbox"
-                    name="is_active"
-                    defaultChecked={category.is_active}
-                  />{" "}
-                  Active
-                </label>
-              </AdminActionForm>
-            </details>
+        </header>
+
+        {params.saved === "product" && <p className="admin-inline-notice is-success" role="status"><Sparkles aria-hidden="true" size={16} />Product added to your catalog.</p>}
+        {productResult.error && <p className="admin-inline-notice is-error" role="alert">Products could not be loaded. Check the Supabase connection and menu access policy.</p>}
+        {categoryResult.error && <p className="admin-inline-notice is-error" role="alert">Categories could not be loaded. You can still edit products without changing their category.</p>}
+
+        <section className="admin-product-stats" aria-label="Product statistics">
+          {stats.map(({ label, value, detail, icon: Icon, tone }) => (
+            <article className="admin-product-stat" key={label}><span className={`admin-product-stat-icon is-${tone}`}><Icon aria-hidden="true" size={21} /></span><span className="admin-product-stat-copy"><small>{label}</small><strong>{value}</strong><span>{detail}</span></span></article>
           ))}
-        </div>
-        <h3>Add category</h3>
-        <AdminActionForm
-          action={saveCategoryAction}
-          submitLabel="Add category"
-          className="form-grid"
-        >
-          <label className="field-label">
-            Name
-            <input name="name" required minLength={2} maxLength={100} />
-          </label>
-          <label className="field-label">
-            Slug
-            <input name="slug" required pattern="[a-z0-9]+(-[a-z0-9]+)*" />
-          </label>
-          <label className="field-label">
-            Sort order
-            <input
-              type="number"
-              name="sort_order"
-              defaultValue="0"
-              min="0"
-              max="10000"
-            />
-          </label>
-          <label className="field-label">
-            Description
-            <input name="description" maxLength={500} />
-          </label>
-          <label>
-            <input type="checkbox" name="is_active" /> Active
-          </label>
-        </AdminActionForm>
+        </section>
+
+        <AdminProductTable categories={categories} initialSearch={typeof params.q === "string" ? params.q : ""} products={rows} />
       </div>
     </AdminShell>
   );

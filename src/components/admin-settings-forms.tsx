@@ -1,8 +1,6 @@
-import Image from "next/image";
 import { AdminActionForm } from "@/components/admin-action-form";
 import { saveBusinessSettingsSectionAction } from "@/app/actions/shop";
 import type { BusinessSettings } from "@/lib/business";
-import { getPaymentQrImageUrl } from "@/lib/payment-qr";
 import type { ReactNode } from "react";
 
 function SectionForm({
@@ -82,9 +80,6 @@ export function OrderingSettingsForm({
   settings: BusinessSettings;
   paymongoChannels: string[];
 }) {
-  const gcashQrUrl = getPaymentQrImageUrl(settings.gcash_qr_image_path);
-  const paymayaQrUrl = getPaymentQrImageUrl(settings.paymaya_qr_image_path);
-
   return (
     <SectionForm section="ordering">
       <p className="form-notice">
@@ -129,34 +124,7 @@ export function OrderingSettingsForm({
               <input type="checkbox" name="payment_methods" value="paymongo" defaultChecked={settings.payment_methods.includes("paymongo")} /> PayMongo hosted checkout ({paymongoChannels.join(", ")})
             </label>
           )}
-          <label>
-            <input type="checkbox" name="payment_methods" value="gcash_qr" defaultChecked={settings.payment_methods.includes("gcash_qr")} /> GCash QR (staff verified)
-          </label>
-          <label>
-            <input type="checkbox" name="payment_methods" value="paymaya_qr" defaultChecked={settings.payment_methods.includes("paymaya_qr")} /> Maya / PayMaya QR (staff verified)
-          </label>
         </div>
-      </fieldset>
-      <fieldset className="qr-settings-fieldset">
-        <legend className="field-label">Wallet QR codes</legend>
-        <p className="field-help">Upload the receive QR shown in your wallet app. Customers pay the order total and submit their transaction reference; staff must verify the transfer before marking it paid.</p>
-        <div className="qr-settings-grid">
-          <div className="qr-settings-card">
-            <strong>GCash receive QR</strong>
-            {gcashQrUrl ? <Image src={gcashQrUrl} alt="Current GCash receive QR" width={220} height={220} unoptimized /> : <p className="muted">No GCash QR uploaded yet.</p>}
-            <label className="field-label" htmlFor="gcash_qr_file">Upload or replace GCash QR</label>
-            <input id="gcash_qr_file" type="file" name="gcash_qr_file" accept="image/png,image/jpeg,image/webp" />
-            {settings.gcash_qr_image_path && <label className="check-row"><input type="checkbox" name="remove_gcash_qr" /> Remove the active GCash QR</label>}
-          </div>
-          <div className="qr-settings-card">
-            <strong>Maya / PayMaya receive QR</strong>
-            {paymayaQrUrl ? <Image src={paymayaQrUrl} alt="Current Maya / PayMaya receive QR" width={220} height={220} unoptimized /> : <p className="muted">No Maya QR uploaded yet.</p>}
-            <label className="field-label" htmlFor="paymaya_qr_file">Upload or replace Maya QR</label>
-            <input id="paymaya_qr_file" type="file" name="paymaya_qr_file" accept="image/png,image/jpeg,image/webp" />
-            {settings.paymaya_qr_image_path && <label className="check-row"><input type="checkbox" name="remove_paymaya_qr" /> Remove the active Maya QR</label>}
-          </div>
-        </div>
-        <small>Images must be PNG, JPG, or WebP and no larger than 5 MB. QR files already used by pending orders are retained when replaced or removed.</small>
       </fieldset>
       {paymongoChannels.length === 0 && (
         <p className="field-help">PayMongo appears here after its server secret, webhook secret, service role key, and approved channel list are configured.</p>

@@ -21,6 +21,31 @@ export function clearMenuDataCache() {
   menuDataRequest = null;
 }
 
+function describeQueryError(error: unknown) {
+  if (!error) return null;
+  if (typeof error !== "object") return { message: String(error) };
+
+  const value = error as {
+    code?: unknown;
+    details?: unknown;
+    hint?: unknown;
+    message?: unknown;
+  };
+  const serialized = JSON.stringify(error);
+
+  return {
+    code: typeof value.code === "string" ? value.code : null,
+    message:
+      typeof value.message === "string"
+        ? value.message
+        : serialized && serialized !== "{}"
+          ? serialized
+          : "Supabase returned an error without details",
+    details: typeof value.details === "string" ? value.details : null,
+    hint: typeof value.hint === "string" ? value.hint : null,
+  };
+}
+
 async function loadMenuData(): Promise<MenuData> {
   const supabase = await createOptionalClient();
   if (!supabase) return { products: [], categories: [], productsWithOptions: [], configured: false, failed: false };
@@ -53,12 +78,13 @@ async function loadMenuData(): Promise<MenuData> {
     variantsResult.error
   ) {
     if (process.env.NODE_ENV === "development") {
-      console.error("Public menu query failed", {
-        products: productsResult.error?.message,
-        categories: categoriesResult.error?.message,
-        variants: variantsResult.error?.message,
-        addonLinks: addonLinksResult.error?.message,
-      });
+      const errors = {
+        products: describeQueryError(productsResult.error),
+        categories: describeQueryError(categoriesResult.error),
+        variants: describeQueryError(variantsResult.error),
+        addonLinks: describeQueryError(addonLinksResult.error),
+      };
+      console.error(`Public menu query failed: ${JSON.stringify(errors)}`);
     }
     return { products: [], categories: [], productsWithOptions: [], configured: true, failed: true };
   }

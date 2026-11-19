@@ -12,26 +12,30 @@ export function AdminShell({
   title,
   roles,
   children,
+  hideHeading = false,
 }: {
   title: string;
   roles: StaffRole[];
   children: ReactNode;
+  hideHeading?: boolean;
 }) {
   return (
     <section className="admin-page">
-      <header className="admin-page-heading">
-        <div>
-          <span className="admin-page-kicker">Business management</span>
-          <h1>{title}</h1>
-        </div>
-        <div className="admin-role-badges" aria-label="Your staff roles">
-          {roles.map((role) => (
-            <span className="admin-role-badge" key={role}>
-              {roleLabels[role]}
-            </span>
-          ))}
-        </div>
-      </header>
+      {!hideHeading && (
+        <header className="admin-page-heading">
+          <div>
+            <span className="admin-page-kicker">Business management</span>
+            <h1>{title}</h1>
+          </div>
+          <div className="admin-role-badges" aria-label="Your staff roles">
+            {roles.map((role) => (
+              <span className="admin-role-badge" key={role}>
+                {roleLabels[role]}
+              </span>
+            ))}
+          </div>
+        </header>
+      )}
       <div className="admin-page-content">{children}</div>
     </section>
   );

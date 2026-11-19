@@ -39,7 +39,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
   ]);
 
   return (
-    <html lang="en">
+    <html lang="en" data-scroll-behavior="smooth">
       <body>
         <LanguageProvider>
           <CartProvider isAuthenticated={Boolean(user)}>

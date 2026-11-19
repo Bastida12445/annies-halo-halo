@@ -6,28 +6,29 @@ Create a Supabase project in the region appropriate for the business. From **Pro
 
 Apply `supabase/migrations/202610290001_initial_business_system.sql` in the Supabase SQL Editor while signed in as the project owner. It creates the application tables, row level security policies, RPC functions, audit records, and the public menu image bucket. Confirm the SQL Editor reports that the full script completed. The migration has not been applied to a live Supabase project from this workspace.
 
+Apply later migration files in filename order as you update the application. The premium customer dashboard uses `202611160001_customer_dashboard_favorite.sql`; the admin sales chart and top-selling products use `202611160002_admin_dashboard_insights.sql`. The functions enforce their respective customer or administrator role checks, and the admin dashboard displays a setup notice until its migration is applied.
+
 ## 2. Configure Auth
 
 In **Authentication → URL Configuration**:
 
 - Set the Site URL to the local or deployed origin.
 - Add `<origin>/auth/callback` to the redirect URL allowlist (for example `http://localhost:3000/auth/callback`).
-- Configure production email delivery and an appropriate verification/reset email template before launch.
-- Enable email confirmation. Users need to verify before signing in.
+- Configure production email delivery and an appropriate password-reset email template before launch.
+- Disable **Confirm email** under the email provider settings if customers should be able to sign in immediately after registration. Supabase will automatically mark the submitted email address as confirmed when this setting is off.
 - Consider enabling Supabase Auth CAPTCHA and review the project’s rate limits and abuse controls.
 
 Set `APP_BASE_URL` to the exact public origin in each deployment environment. Use HTTPS in production.
 
 ## 3. Create the first administrator
 
-Register the owner through the site, verify the email, and then run this query in the trusted Supabase SQL Editor. Replace the email with the verified owner account. This bootstrap query is for the initial administrator only; do not expose it through a public page or client code.
+Register the owner through the site, then run this query in the trusted Supabase SQL Editor. Replace the email with the owner account. This bootstrap query is for the initial administrator only; do not expose it through a public page or client code.
 
 ```sql
 insert into public.user_roles (user_id, role)
 select id, 'administrator'
 from auth.users
 where lower(email) = lower('owner@example.com')
-  and email_confirmed_at is not null
 on conflict (user_id, role) do nothing;
 ```
 
@@ -47,10 +48,10 @@ Cash on pickup and cash on delivery are available when enabled by an administrat
 
 - `PAYMONGO_SECRET_KEY` — use a test key (`sk_test_...`) in staging and a live key (`sk_live_...`) only in production.
 - `PAYMONGO_WEBHOOK_SECRET` — the secret for the webhook endpoint in that same mode.
-- `PAYMONGO_PAYMENT_METHOD_TYPES` — comma-separated enabled channels; this integration accepts `gcash`, `qrph`, and `card`.
+- `PAYMONGO_PAYMENT_METHOD_TYPES` — comma-separated enabled channels; this integration accepts `gcash`, `paymaya`, `qrph`, and `card`.
 - `SUPABASE_SERVICE_ROLE_KEY` — used only by the signed webhook handler. Keep it server-side and out of browser variables.
 
-After adding the keys, open **Admin → Business settings** and explicitly enable PayMongo. Only configure channels approved and enabled in the PayMongo dashboard. The checkout creates a session on the server, redirects to PayMongo, and stores the Checkout Session ID. The browser return never marks an order paid.
+After adding the keys, open **Admin → Business settings** and explicitly enable PayMongo. Only configure channels approved and enabled in the PayMongo dashboard. When GCash or Maya is configured, checkout offers separate wallet choices and creates a PayMongo session restricted to the selected channel before redirecting the customer to the provider flow. Funds settle to the merchant account connected to PayMongo, not to a personal QR image. The checkout stores the Checkout Session ID; the browser return never marks an order paid.
 
 Register `https://<your-domain>/api/webhooks/paymongo` in PayMongo for `checkout_session.payment.paid`. Use a separate test endpoint and secret for staging and a live endpoint and secret for production. The handler verifies PayMongo's raw-body HMAC signature and mode, checks the session/reference/amount/currency against the order, and records each event ID once. Duplicate deliveries are acknowledged idempotently. Failed individual attempts remain pending so the customer can retry inside the same hosted session. When a customer or staff member cancels an unpaid online order, the app first asks PayMongo to expire the session; it will not cancel while payment may still be processing. If a session expired in the PayMongo dashboard, the next resume attempt verifies and records that state. Do not manually edit payment status in SQL.
 

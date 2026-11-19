@@ -207,6 +207,10 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      get_customer_favorite_menu: {
+        Args: Record<string, never>;
+        Returns: Array<{ item_name: string; item_quantity: number }>;
+      };
       place_order: {
         Args: {
           p_items: Json;
@@ -299,6 +303,20 @@ export type Database = {
           paid_sales_cents: number;
           unpaid_order_cents: number;
           unavailable_products: number;
+        }>;
+      };
+      get_admin_sales_series: {
+        Args: { p_from: string; p_to: string; p_bucket: string };
+        Returns: Array<{ bucket_start: string; sales_cents: number }>;
+      };
+      get_admin_top_products: {
+        Args: { p_from: string | null; p_to: string | null; p_limit: number | null };
+        Returns: Array<{
+          product_id: string | null;
+          product_name: string;
+          items_sold: number;
+          sales_cents: number;
+          image_path: string | null;
         }>;
       };
       current_business_time: { Args: Record<string, never>; Returns: string };

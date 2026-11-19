@@ -64,7 +64,10 @@ export const checkoutSchema = z.object({
   serviceArea: z.string().trim().max(120).optional().default(""),
   phone: phone,
   notes: z.string().trim().max(1000).optional().default(""),
-  paymentMethod: z.enum(["cash_on_pickup", "cash_on_delivery", "paymongo", "gcash_qr", "paymaya_qr"]),
+  paymentMethod: z.enum(["cash_on_pickup", "cash_on_delivery", "paymongo"]),
+  paymongoChannels: z.array(z.enum(["qrph", "card"])).max(2)
+    .refine((channels) => new Set(channels).size === channels.length, "Choose each online payment method once.")
+    .default([]),
   idempotencyKey: z.string().uuid(),
   expectedTotalCents: z.number().int().min(0).max(10_000_000),
 });
@@ -97,6 +100,15 @@ export const productSchema = z.object({
   is_featured: z.coerce.boolean().default(false),
 });
 
+export const categorySchema = z.object({
+  id: z.string().uuid().optional(),
+  name: z.string().trim().min(2).max(100),
+  slug: z.string().trim().min(2).max(140).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+  description: z.string().trim().max(500).optional().default(""),
+  sort_order: z.coerce.number().int().min(0).max(10_000).default(0),
+  is_active: z.coerce.boolean().default(false),
+});
+
 export const businessSettingsSchema = z.object({
   business_name: z.string().trim().min(2).max(160),
   short_description: z.string().trim().max(500),
@@ -122,8 +134,8 @@ export const businessSettingsSchema = z.object({
     }),
   ).max(100),
   payment_methods: z.array(
-    z.enum(["cash_on_pickup", "cash_on_delivery", "paymongo", "gcash_qr", "paymaya_qr"]),
-  ).max(5).refine((methods) => new Set(methods).size === methods.length, "Choose each payment method once."),
+    z.enum(["cash_on_pickup", "cash_on_delivery", "paymongo"]),
+  ).max(3).refine((methods) => new Set(methods).size === methods.length, "Choose each payment method once."),
   gcash_qr_image_path: z.string().trim().regex(/^qrs\/gcash-[a-f0-9-]{36}\.(?:png|jpe?g|webp)$/i).nullable(),
   paymaya_qr_image_path: z.string().trim().regex(/^qrs\/paymaya-[a-f0-9-]{36}\.(?:png|jpe?g|webp)$/i).nullable(),
   announcement: z.string().trim().max(500),
@@ -173,13 +185,11 @@ export const businessSettingsSchema = z.object({
     if (slotKeys.has(key)) context.addIssue({ code: "custom", path: ["reservation_slots", index, "starts_at"], message: "Reservation time slots must be unique." });
     slotKeys.add(key);
   });
-  if (value.pickup_enabled && !value.payment_methods.some((method) => method === "cash_on_pickup" || method === "paymongo" || method === "gcash_qr" || method === "paymaya_qr")) context.addIssue({ code: "custom", path: ["payment_methods"], message: "Enable a pickup payment method before enabling pickup orders." });
+  if (value.pickup_enabled && !value.payment_methods.some((method) => method === "cash_on_pickup" || method === "paymongo")) context.addIssue({ code: "custom", path: ["payment_methods"], message: "Enable a pickup payment method before enabling pickup orders." });
   if (value.delivery_enabled && value.delivery_areas.length === 0) context.addIssue({ code: "custom", path: ["delivery_areas"], message: "Add a delivery area before enabling delivery." });
-  if (value.delivery_enabled && !value.payment_methods.some((method) => method === "cash_on_delivery" || method === "paymongo" || method === "gcash_qr" || method === "paymaya_qr")) context.addIssue({ code: "custom", path: ["payment_methods"], message: "Enable a delivery payment method before enabling delivery orders." });
+  if (value.delivery_enabled && !value.payment_methods.some((method) => method === "cash_on_delivery" || method === "paymongo")) context.addIssue({ code: "custom", path: ["payment_methods"], message: "Enable a delivery payment method before enabling delivery orders." });
   if (!value.delivery_enabled && value.payment_methods.includes("cash_on_delivery")) context.addIssue({ code: "custom", path: ["payment_methods"], message: "Enable delivery before selecting cash on delivery." });
   if (!value.pickup_enabled && value.payment_methods.includes("cash_on_pickup")) context.addIssue({ code: "custom", path: ["payment_methods"], message: "Enable pickup before selecting cash on pickup." });
-  if (value.payment_methods.includes("gcash_qr") && !value.gcash_qr_image_path) context.addIssue({ code: "custom", path: ["gcash_qr_image_path"], message: "Upload the GCash QR image before enabling GCash QR payments." });
-  if (value.payment_methods.includes("paymaya_qr") && !value.paymaya_qr_image_path) context.addIssue({ code: "custom", path: ["paymaya_qr_image_path"], message: "Upload the Maya / PayMaya QR image before enabling those payments." });
 });
 
 export type CheckoutInput = z.infer<typeof checkoutSchema>;

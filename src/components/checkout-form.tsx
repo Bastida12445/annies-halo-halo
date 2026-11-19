@@ -9,26 +9,45 @@ import { useCart } from "@/components/cart-provider";
 import { T } from "@/components/language-provider";
 import { formatPhp } from "@/lib/money";
 import type { BusinessSettings } from "@/lib/business";
+import type { PayMongoChannel } from "@/lib/paymongo-config";
 
 const initialState: ShopActionState = {};
-type PaymentMethod = BusinessSettings["payment_methods"][number];
+type PaymentMethod = "cash_on_pickup" | "cash_on_delivery" | "paymongo";
 type FulfillmentMethod = "pickup" | "delivery";
+type PaymentChoice = {
+  id: string;
+  method: PaymentMethod;
+  channels: PayMongoChannel[];
+};
 
 function getAllowedPaymentMethods(
   methods: BusinessSettings["payment_methods"],
   fulfillment: FulfillmentMethod,
-) {
-  return methods.filter((method) =>
-    fulfillment === "pickup"
-      ? method === "cash_on_pickup" ||
-        method === "paymongo" ||
-        method === "gcash_qr" ||
-        method === "paymaya_qr"
-      : method === "cash_on_delivery" ||
-        method === "paymongo" ||
-        method === "gcash_qr" ||
-        method === "paymaya_qr",
+): PaymentMethod[] {
+  return methods.filter((method): method is PaymentMethod =>
+    method === "paymongo" ||
+    (fulfillment === "pickup" && method === "cash_on_pickup") ||
+    (fulfillment === "delivery" && method === "cash_on_delivery"),
   );
+}
+
+function getPaymentChoices(
+  settings: BusinessSettings,
+  fulfillment: FulfillmentMethod,
+): PaymentChoice[] {
+  const methods = getAllowedPaymentMethods(settings.payment_methods, fulfillment);
+  const hasGateway = methods.includes("paymongo");
+  const channels = hasGateway ? settings.paymongo_payment_methods as PayMongoChannel[] : [];
+  const choices: PaymentChoice[] = [];
+
+  for (const method of methods) {
+    if (method === "paymongo") {
+      if (channels.length) choices.push({ id: "paymongo", method, channels });
+      continue;
+    }
+    choices.push({ id: method, method, channels: [] });
+  }
+  return choices;
 }
 
 function PaymentMethodBrand({ method }: { method: PaymentMethod }) {
@@ -40,27 +59,12 @@ function PaymentMethodBrand({ method }: { method: PaymentMethod }) {
     );
   }
 
-  const logo =
-    method === "gcash_qr"
-      ? {
-          src: "/payment-logos/gcash.svg",
-          alt: "GCash logo",
-          width: 72,
-          height: 61,
-        }
-      : method === "paymaya_qr"
-        ? {
-            src: "/payment-logos/maya.svg",
-            alt: "Maya logo",
-            width: 112,
-            height: 33,
-          }
-        : {
-            src: "/payment-logos/paymongo.svg",
-            alt: "PayMongo logo",
-            width: 234,
-            height: 40,
-          };
+  const logo = {
+    src: "/payment-logos/paymongo.svg",
+    alt: "PayMongo logo",
+    width: 234,
+    height: 40,
+  };
 
   return (
     <span className={`payment-brand payment-brand-${method}`}>
@@ -103,15 +107,10 @@ export function CheckoutForm({
   );
   const fee = fulfillment === "delivery" ? (selectedArea?.fee_cents ?? 0) : 0;
   const estimatedTotal = cart.totalCents + fee;
-  const allowedPaymentMethods = getAllowedPaymentMethods(
-    settings.payment_methods,
-    fulfillment,
-  );
-  const hasManualQrPayment = allowedPaymentMethods.some(
-    (method) => method === "gcash_qr" || method === "paymaya_qr",
-  );
-  const defaultPaymentMethod = allowedPaymentMethods[0] ?? "";
-  const [paymentMethod, setPaymentMethod] = useState(defaultPaymentMethod);
+  const paymentChoices = getPaymentChoices(settings, fulfillment);
+  const defaultPaymentChoice = paymentChoices[0]?.id ?? "";
+  const [paymentChoiceId, setPaymentChoiceId] = useState(defaultPaymentChoice);
+  const selectedPaymentChoice = paymentChoices.find(({ id }) => id === paymentChoiceId) ?? paymentChoices[0];
   const items = useMemo(
     () =>
       JSON.stringify(
@@ -146,7 +145,7 @@ export function CheckoutForm({
     Boolean(selectedArea);
   const canPickup = settings.pickup_enabled;
   const fulfillingAllowed = fulfillment === "pickup" ? canPickup : canDeliver;
-  const paymentAvailable = allowedPaymentMethods.length > 0;
+  const paymentAvailable = paymentChoices.length > 0;
   const belowMinimum = cart.totalCents < settings.minimum_order_cents;
 
   return (
@@ -169,6 +168,7 @@ export function CheckoutForm({
       }}
     >
       <input type="hidden" name="items" value={items} />
+      <input type="hidden" name="paymongo_channels" value={JSON.stringify(selectedPaymentChoice?.channels ?? [])} />
       <input
         ref={idempotencyRef}
         type="hidden"
@@ -200,16 +200,14 @@ export function CheckoutForm({
               const nextFulfillment = event.target.value as
                 | "pickup"
                 | "delivery";
-              const nextMethods = getAllowedPaymentMethods(
-                settings.payment_methods,
-                nextFulfillment,
-              );
+              const nextChoices = getPaymentChoices(settings, nextFulfillment);
               setFulfillment(nextFulfillment);
-              setPaymentMethod((current) =>
-                nextMethods.includes(current as PaymentMethod)
+              setPaymentChoiceId((current) =>
+                nextChoices.some(({ id }) => id === current)
                   ? current
-                  : (nextMethods[0] ?? ""),
+                  : (nextChoices[0]?.id ?? ""),
               );
+              if (idempotencyRef.current) idempotencyRef.current.value = "";
             }}
           >
             <option value="pickup" disabled={!canPickup}>
@@ -311,62 +309,48 @@ export function CheckoutForm({
               <T en="Payment method" fil="Paraan ng pagbabayad" />
             </legend>
             <div className="payment-method-grid">
-              {allowedPaymentMethods.map((method) => (
+              {paymentChoices.map((choice) => (
                 <label
-                  className={`payment-method-card${paymentMethod === method ? " is-selected" : ""}`}
-                  key={method}
+                  className={`payment-method-card${paymentChoiceId === choice.id ? " is-selected" : ""}`}
+                  key={choice.id}
                 >
                   <input
                     type="radio"
                     name="payment_method"
-                    value={method}
-                    checked={paymentMethod === method}
-                    onChange={() => setPaymentMethod(method)}
+                    value={choice.method}
+                    checked={paymentChoiceId === choice.id}
+                    onChange={() => {
+                      setPaymentChoiceId(choice.id);
+                      if (idempotencyRef.current) idempotencyRef.current.value = "";
+                    }}
                     required
                   />
-                  <PaymentMethodBrand method={method} />
+                  <PaymentMethodBrand method={choice.method} />
                   <span className="payment-method-copy">
                     <strong>
-                      {method === "cash_on_pickup" ? (
+                      {choice.method === "cash_on_pickup" ? (
                         <T en="Cash on pickup" fil="Cash sa pickup" />
-                      ) : method === "cash_on_delivery" ? (
+                      ) : choice.method === "cash_on_delivery" ? (
                         <T en="Cash on delivery" fil="Cash sa delivery" />
-                      ) : method === "paymongo" ? (
-                        <T
-                          en="Pay online with PayMongo"
-                          fil="Magbayad online gamit ang PayMongo"
-                        />
-                      ) : method === "gcash_qr" ? (
-                        <T en="GCash QR payment" fil="Bayad gamit ang GCash QR" />
                       ) : (
                         <T
-                          en="Maya / PayMaya QR payment"
-                          fil="Bayad gamit ang Maya / PayMaya QR"
+                          en={choice.channels.length ? `Pay online · ${choice.channels.map((channel) => channel.toUpperCase()).join(" / ")}` : "Pay online with PayMongo"}
+                          fil={choice.channels.length ? `Magbayad online · ${choice.channels.map((channel) => channel.toUpperCase()).join(" / ")}` : "Magbayad online gamit ang PayMongo"}
                         />
                       )}
                     </strong>
                     <small>
-                      {method === "cash_on_pickup" ? (
+                      {choice.method === "cash_on_pickup" ? (
                         <T en="Pay when you pick up your order." fil="Magbayad pag kuha ng order." />
-                      ) : method === "cash_on_delivery" ? (
+                      ) : choice.method === "cash_on_delivery" ? (
                         <T
                           en="Pay when your order is delivered."
                           fil="Magbayad pag na-deliver ang order."
                         />
-                      ) : method === "paymongo" ? (
+                      ) : (
                         <T
                           en={`Secure checkout${settings.paymongo_payment_methods.length ? ` · ${settings.paymongo_payment_methods.join(", ")}` : ""}`}
                           fil={`Secure na checkout${settings.paymongo_payment_methods.length ? ` · ${settings.paymongo_payment_methods.join(", ")}` : ""}`}
-                        />
-                      ) : method === "gcash_qr" ? (
-                        <T
-                          en="Scan the shop QR after placing your order."
-                          fil="I-scan ang QR ng tindahan pagkatapos mag-order."
-                        />
-                      ) : (
-                        <T
-                          en="Scan the shop QR after placing your order."
-                          fil="I-scan ang QR ng tindahan pagkatapos mag-order."
                         />
                       )}
                     </small>
@@ -381,16 +365,6 @@ export function CheckoutForm({
               en="No payment method is enabled for this fulfillment option. Contact the shop while it finishes setup."
               fil="Walang naka-enable na paraan ng bayad para sa pagpipiliang ito. Makipag-ugnayan sa tindahan habang inaayos pa ito."
             />
-          </p>
-        )}
-        {settings.payment_methods.includes("paymongo") && (
-          <p className="field-help">
-            <T en="PayMongo hosts its secure payment page. This website never receives your card or wallet credentials." fil="Nasa PayMongo ang secure na pahina ng bayad. Hindi nakikita ng website na ito ang detalye ng card o wallet mo." />
-          </p>
-        )}
-        {hasManualQrPayment && (
-          <p className="form-notice">
-            <T en="For QR payments, scan the code shown after placing your order, pay the exact total, and submit your transfer reference. The shop will verify payment before marking it paid." fil="Para sa QR payment, i-scan ang code pagkatapos mag-order, bayaran ang eksaktong total, at isumite ang transfer reference. Beripikahin muna ng tindahan ang bayad bago markahang bayad na." />
           </p>
         )}
       </div>

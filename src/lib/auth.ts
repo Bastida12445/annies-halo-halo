@@ -7,9 +7,9 @@ import type { StaffRole } from "@/types/database";
 export async function getCurrentUserForNavigation() {
   if (!getSupabaseConfig()) return null;
   const supabase = await createClient();
-  // Display only. Proxy refreshes the session; protected code verifies claims separately.
-  const { data, error } = await supabase.auth.getSession();
-  const email = data.session?.user.email;
+  // Read verified JWT claims without trusting auth data decoded from cookie storage.
+  const { data, error } = await supabase.auth.getClaims();
+  const email = data?.claims?.email;
   return error || typeof email !== "string" ? null : { email };
 }
 

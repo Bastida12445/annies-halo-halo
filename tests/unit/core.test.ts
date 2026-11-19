@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { checkoutSchema, registerSchema } from "@/lib/schemas";
+import { categorySchema, checkoutSchema, productSchema, registerSchema } from "@/lib/schemas";
 import { formatDateTime, formatPhp } from "@/lib/money";
 import { safeInternalRedirect } from "@/lib/redirects";
 import { verifyPayMongoSignature } from "@/lib/paymongo-signature";
@@ -89,6 +89,48 @@ describe("form validation", () => {
       expectedTotalCents: 200,
     });
     expect(result.success).toBe(false);
+  });
+
+  it("keeps product price and menu flags valid before saving", () => {
+    const result = productSchema.safeParse({
+      name: "Halo-Halo Classic",
+      slug: "halo-halo-classic",
+      category_id: null,
+      description: "A classic local dessert.",
+      price_cents: 9500,
+      image_path: "",
+      sort_order: 0,
+      is_active: true,
+      is_available: true,
+      is_featured: true,
+    });
+    const invalidSlug = productSchema.safeParse({
+      name: "Halo-Halo Classic",
+      slug: "Halo Halo",
+      price_cents: 9500,
+    });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.is_featured).toBe(true);
+    expect(invalidSlug.success).toBe(false);
+  });
+
+  it("validates menu categories before creation or editing", () => {
+    const valid = categorySchema.safeParse({
+      name: "Halo-Halo",
+      slug: "halo-halo",
+      description: "Classic and specialty halo-halo.",
+      sort_order: "2",
+      is_active: true,
+    });
+    const invalid = categorySchema.safeParse({
+      name: "A",
+      slug: "UPPER CASE",
+      description: "x".repeat(501),
+      sort_order: "-1",
+      is_active: true,
+    });
+    expect(valid.success).toBe(true);
+    expect(invalid.success).toBe(false);
   });
 });
 

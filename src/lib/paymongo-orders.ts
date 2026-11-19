@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAppBaseUrl } from "@/lib/config";
 import { getSnapshotOptions } from "@/lib/order-snapshot";
 import { createPayMongoCheckoutSession, retrievePayMongoCheckoutSession } from "@/lib/paymongo";
+import type { PayMongoChannel } from "@/lib/paymongo-config";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import type { Database } from "@/types/database";
 
@@ -10,6 +11,7 @@ export async function getOrCreatePayMongoCheckout(
   supabase: SupabaseClient<Database>,
   customerId: string,
   orderId: string,
+  channels?: PayMongoChannel[],
 ): Promise<string> {
   const { data: order } = await supabase
     .from("orders")
@@ -73,6 +75,7 @@ export async function getOrCreatePayMongoCheckout(
     successUrl: `${confirmationUrl}?payment=return`,
     cancelUrl: `${confirmationUrl}?payment=cancelled`,
     lineItems,
+    channels,
   });
   const { data: attached, error: attachError } = await supabase.rpc("attach_paymongo_checkout_session", {
     p_order_id: order.id,

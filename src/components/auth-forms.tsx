@@ -150,9 +150,6 @@ export function RegisterForm({ next = "/account" }: { next?: string }) {
             <T en="Sign in" fil="Mag-log in" />
           </Link>
         </span>
-        <Link href="/verify-email">
-          <T en="Resend verification" fil="Ipadala muli ang verification" />
-        </Link>
       </div>
     </form>
   );

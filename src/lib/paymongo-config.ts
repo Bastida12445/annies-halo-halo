@@ -1,4 +1,4 @@
-const supportedChannels = ["gcash", "qrph", "card"] as const;
+const supportedChannels = ["qrph", "card"] as const;
 
 export type PayMongoChannel = (typeof supportedChannels)[number];
 export type PayMongoMode = "test" | "live";

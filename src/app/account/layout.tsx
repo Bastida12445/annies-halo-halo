@@ -8,12 +8,21 @@ export default async function CustomerAccountLayout({
 }: {
   children: ReactNode;
 }) {
-  const user = getSupabaseConfig()
-    ? (await requireCustomer("/account")).user
-    : null;
+  let email = "";
+  let customerName = "";
+  if (getSupabaseConfig()) {
+    const { supabase, user } = await requireCustomer("/account");
+    email = user.email ?? "";
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("full_name")
+      .eq("id", user.id)
+      .maybeSingle();
+    customerName = profile?.full_name?.trim() || "";
+  }
 
   return (
-    <CustomerWorkspace email={user?.email ?? ""}>
+    <CustomerWorkspace customerName={customerName} email={email}>
       {children}
     </CustomerWorkspace>
   );

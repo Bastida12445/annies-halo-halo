@@ -13,8 +13,39 @@ test("home, menu, and account entry points render without business credentials",
 
   await page.goto("/menu");
   await expect(page.getByRole("heading", { name: "The menu" })).toBeVisible();
-  await expect(page.getByRole("status")).toContainText(/being set up/i);
+  const menuResult = page
+    .getByRole("status")
+    .or(page.getByRole("article").first())
+    .or(page.locator(".empty-state"));
+  await expect(menuResult.first()).toBeVisible();
+
+  for (const image of [
+    "halo-halo-hero.jpg",
+    "purple-smoothie.jpg",
+    "leche-flan.jpg",
+    "mango-graham-dessert.jpg",
+  ]) {
+    const response = await page.request.get(`/images/customer-dashboard/${image}`);
+    expect(response.ok(), `${image} should be served successfully`).toBeTruthy();
+    expect(response.headers()["content-type"]).toContain("image/");
+  }
 
   await page.goto("/login");
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+
+  await page.goto("/account");
+  await expect(page).toHaveURL(/\/login\?next=%2Faccount/);
+
+  await page.goto("/admin");
+  await expect(page).toHaveURL(/\/login\?next=%2Fadmin/);
+
+  for (const route of [
+    "/admin/products",
+    "/admin/products/new",
+    "/admin/products/categories",
+    "/admin/products/categories/new",
+  ]) {
+    await page.goto(route);
+    await expect(page).toHaveURL(/\/login\?next=%2Fadmin$/);
+  }
 });

@@ -1,5 +1,6 @@
 import "server-only";
 import { getPayMongoConfig } from "@/lib/paymongo-config";
+import type { PayMongoChannel } from "@/lib/paymongo-config";
 
 export type PayMongoLineItem = {
   name: string;
@@ -82,9 +83,14 @@ export async function createPayMongoCheckoutSession(input: {
   successUrl: string;
   cancelUrl: string;
   lineItems: PayMongoLineItem[];
+  channels?: PayMongoChannel[];
 }): Promise<{ sessionId: string; checkoutUrl: string }> {
   const config = getPayMongoConfig();
   if (!config) throw new Error("paymongo_not_configured");
+  const channels = input.channels?.length ? [...new Set(input.channels)] : config.channels;
+  if (channels.some((channel) => !config.channels.includes(channel))) {
+    throw new Error("paymongo_channel_not_enabled");
+  }
 
   const response = await fetch("https://api.paymongo.com/v2/checkout_sessions", {
     method: "POST",
@@ -104,7 +110,7 @@ export async function createPayMongoCheckoutSession(input: {
             currency: "PHP",
             quantity: item.quantity,
           })),
-          payment_method_types: config.channels,
+          payment_method_types: channels,
           success_url: input.successUrl,
           cancel_url: input.cancelUrl,
           reference_number: input.orderReference,

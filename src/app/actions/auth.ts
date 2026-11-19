@@ -34,9 +34,10 @@ export async function registerAction(_state: ActionState, formData: FormData): P
   });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check your details." };
 
+  let destination = "/account";
   try {
     const supabase = await createClient();
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email: parsed.data.email,
       password: parsed.data.password,
       options: {
@@ -50,10 +51,18 @@ export async function registerAction(_state: ActionState, formData: FormData): P
       },
     });
     if (error) return { error: "We could not complete registration. Check your details and try again." };
-    return { success: "If registration is available, check your email for the verification link before signing in." };
+    if (!data.session) {
+      return {
+        error:
+          "Email confirmation is still enabled in Supabase. Turn off Confirm email in Authentication settings, then try again.",
+      };
+    }
+    const requested = safeInternalRedirect(text(formData, "next"));
+    destination = requested.startsWith("/admin") ? "/account" : requested;
   } catch {
     return { error: "Account registration is not available until Supabase is configured." };
   }
+  redirect(destination);
 }
 
 export async function loginAction(_state: ActionState, formData: FormData): Promise<ActionState> {
@@ -63,7 +72,7 @@ export async function loginAction(_state: ActionState, formData: FormData): Prom
   try {
     const supabase = await createClient();
     const { data: auth, error } = await supabase.auth.signInWithPassword(parsed.data);
-    if (error || !auth.user) return { error: "The email or password is incorrect, or your email is not verified." };
+    if (error || !auth.user) return { error: "The email or password is incorrect." };
 
     const { data: staffRows, error: staffError } = await supabase
       .from("user_roles")

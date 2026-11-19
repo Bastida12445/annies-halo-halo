@@ -9,11 +9,12 @@ import { clearMenuDataCache } from "@/lib/data";
 import { checkoutSchema, qrPaymentReferenceSchema, reservationSchema } from "@/lib/schemas";
 import type { Json, OrderStatus, ReservationStatus, StaffRole } from "@/types/database";
 import { requireStaff } from "@/lib/auth";
-import { productSchema, businessSettingsSchema } from "@/lib/schemas";
+import { categorySchema, productSchema, businessSettingsSchema } from "@/lib/schemas";
 import { getOrCreatePayMongoCheckout } from "@/lib/paymongo-orders";
 import { expirePayMongoCheckoutSession } from "@/lib/paymongo";
 import { createServiceRoleClient } from "@/lib/supabase/service";
 import { isQrPaymentMethod } from "@/lib/payment-qr";
+import { getPayMongoConfig } from "@/lib/paymongo-config";
 
 export type ShopActionState = { error?: string; success?: string };
 
@@ -28,20 +29,6 @@ function jsonField(formData: FormData, name: string): { ok: true; value: unknown
   } catch {
     return { ok: false };
   }
-}
-
-async function qrImageExtension(file: File): Promise<"png" | "jpg" | "webp" | null> {
-  if (file.size < 12 || file.size > 5 * 1024 * 1024) return null;
-  const header = new Uint8Array(await file.slice(0, 12).arrayBuffer());
-  if (file.type === "image/png" && header.slice(0, 8).join(",") === "137,80,78,71,13,10,26,10") return "png";
-  if (file.type === "image/jpeg" && header[0] === 0xff && header[1] === 0xd8 && header[2] === 0xff) return "jpg";
-  if (file.type === "image/webp" && String.fromCharCode(...header.slice(0, 4)) === "RIFF" && String.fromCharCode(...header.slice(8, 12)) === "WEBP") return "webp";
-  return null;
-}
-
-function uploadedFile(formData: FormData, name: string): File | null {
-  const value = formData.get(name);
-  return value instanceof File && value.size > 0 ? value : null;
 }
 
 export async function placeOrderAction(_state: ShopActionState, formData: FormData): Promise<ShopActionState> {
@@ -60,12 +47,29 @@ export async function placeOrderAction(_state: ShopActionState, formData: FormDa
     phone: text(formData, "phone"),
     notes: text(formData, "notes"),
     paymentMethod: text(formData, "payment_method"),
+    paymongoChannels: (() => {
+      try {
+        const raw = text(formData, "paymongo_channels");
+        return raw ? JSON.parse(raw) as unknown : [];
+      } catch {
+        return null;
+      }
+    })(),
     idempotencyKey: text(formData, "idempotency_key"),
     expectedTotalCents: Number(text(formData, "expected_total_cents")),
   });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check your order details." };
 
   const order = parsed.data;
+  if (order.paymentMethod === "paymongo") {
+    const paymongo = getPayMongoConfig();
+    if (!paymongo || order.paymongoChannels.length === 0 || order.paymongoChannels.some((channel) => !paymongo.channels.includes(channel))) {
+      return { error: "That online payment option is not currently enabled. Choose another payment method or contact the shop." };
+    }
+  } else if (order.paymongoChannels.length > 0) {
+    return { error: "The selected payment option does not match the submitted checkout details." };
+  }
+  const rpcStartedAt = Date.now();
   const { data, error } = await supabase.rpc("place_order", {
     p_items: order.items as unknown as Json,
     p_fulfillment_method: order.fulfillmentMethod,
@@ -79,6 +83,11 @@ export async function placeOrderAction(_state: ShopActionState, formData: FormDa
   });
   if (error) {
     const message = error.message.toLowerCase();
+    console.error("place_order RPC failed", {
+      code: error.code,
+      message: error.message.slice(0, 240),
+      durationMs: Date.now() - rpcStartedAt,
+    });
     if (message.includes("price_changed")) {
       return { error: "A menu price or order option changed. Review the updated cart and confirm again." };
     }
@@ -91,6 +100,12 @@ export async function placeOrderAction(_state: ShopActionState, formData: FormDa
     if (message.includes("payment_method")) {
       return { error: "That payment method is not currently enabled." };
     }
+    if (["57014", "55P03", "40P01", "40001"].includes(error.code)) {
+      return { error: "Checkout took too long because the order service is busy. Your cart is unchanged; please try again." };
+    }
+    if (message.includes("orders_not_configured")) {
+      return { error: "Online ordering is not fully configured yet. Please contact the shop." };
+    }
     return { error: "We could not place your order. Check the details and try again." };
   }
   const created = data?.[0];
@@ -99,7 +114,12 @@ export async function placeOrderAction(_state: ShopActionState, formData: FormDa
   if (order.paymentMethod === "paymongo") {
     let checkoutUrl = "";
     try {
-      checkoutUrl = await getOrCreatePayMongoCheckout(supabase, user.id, created.order_id);
+      checkoutUrl = await getOrCreatePayMongoCheckout(
+        supabase,
+        user.id,
+        created.order_id,
+        order.paymongoChannels.length ? order.paymongoChannels : undefined,
+      );
     } catch (error) {
       revalidatePath(`/account/orders/${created.order_id}`);
       const state = error instanceof Error && error.message.includes("awaiting_webhook") ? "processing" : error instanceof Error && error.message.includes("session_expired") ? "expired" : "retry";
@@ -197,7 +217,7 @@ export async function requestReservationAction(_state: ShopActionState, formData
 }
 
 export async function saveProductAction(_state: ShopActionState, formData: FormData): Promise<ShopActionState> {
-  const { supabase } = await requireUser("/admin/products");
+  const { supabase } = await requireStaff(["administrator", "menu_manager"]);
   const uploaded = formData.get("image");
   let imagePath = text(formData, "image_path").trim();
   let oldImagePath = "";
@@ -262,7 +282,30 @@ export async function saveProductAction(_state: ShopActionState, formData: FormD
   revalidatePath("/menu");
   revalidatePath("/admin/products");
   clearMenuDataCache();
+  if (!savedId) redirect("/admin/products?saved=product");
   return { success: "Product saved." };
+}
+
+export async function deleteProductAction(_state: ShopActionState, formData: FormData): Promise<ShopActionState> {
+  const { supabase } = await requireStaff(["administrator", "menu_manager"]);
+  const productId = text(formData, "product_id");
+  if (!/^[0-9a-f-]{36}$/i.test(productId)) return { error: "Choose a valid product." };
+  const { data: product, error: loadError } = await supabase
+    .from("products")
+    .select("id,name,image_path")
+    .eq("id", productId)
+    .maybeSingle();
+  if (loadError || !product) return { error: "That product could not be found." };
+  const { error } = await supabase.from("products").delete().eq("id", productId);
+  if (error) return { error: "Product could not be deleted. Its sales history remains protected." };
+  if (product.image_path?.startsWith("products/")) {
+    await supabase.storage.from("menu").remove([product.image_path]);
+  }
+  revalidatePath("/menu");
+  revalidatePath("/admin/products");
+  revalidatePath(`/admin/products/${productId}`);
+  clearMenuDataCache();
+  return { success: `${product.name} was deleted.` };
 }
 
 export async function changeOrderStatusAction(_state: ShopActionState, formData: FormData): Promise<ShopActionState> {
@@ -357,8 +400,7 @@ export async function saveBusinessSettingsSectionAction(_state: ShopActionState,
   ) {
     currentSettings.payment_methods = current.config.payment_methods.filter(
       (method): method is (typeof currentSettings.payment_methods)[number] =>
-          method === "cash_on_pickup" || method === "cash_on_delivery" || method === "paymongo" ||
-          (typeof method === "string" && isQrPaymentMethod(method)),
+        method === "cash_on_pickup" || method === "cash_on_delivery" || method === "paymongo",
     );
   }
   const numericField = (name: string) => {
@@ -366,16 +408,6 @@ export async function saveBusinessSettingsSectionAction(_state: ShopActionState,
     return value ? Number(value) : Number.NaN;
   };
   let patch: Record<string, unknown>;
-  const uploadedQrPaths: string[] = [];
-  const cleanupUploadedQrFiles = async () => {
-    if (uploadedQrPaths.length) {
-      try {
-        await supabase.storage.from("payment-qrs").remove(uploadedQrPaths);
-      } catch {
-        // Keep the original settings and report the primary save failure.
-      }
-    }
-  };
 
   if (section === "business") {
     const socialLinks = jsonField(formData, "social_links");
@@ -397,65 +429,6 @@ export async function saveBusinessSettingsSectionAction(_state: ShopActionState,
     const paymentMethods = formData
       .getAll("payment_methods")
       .filter((value): value is string => typeof value === "string");
-    const qrFiles = [
-      { key: "gcash", field: "gcash_qr_file", removeField: "remove_gcash_qr", method: "gcash_qr", label: "GCash" },
-      { key: "paymaya", field: "paymaya_qr_file", removeField: "remove_paymaya_qr", method: "paymaya_qr", label: "Maya / PayMaya" },
-    ] as const;
-    const currentPaths = {
-      gcash: currentSettings.gcash_qr_image_path,
-      paymaya: currentSettings.paymaya_qr_image_path,
-    };
-    const resolvedPaths: { gcash: string | null; paymaya: string | null } = {
-      gcash: currentPaths.gcash,
-      paymaya: currentPaths.paymaya,
-    };
-    const fileExtensions = new Map<File, "png" | "jpg" | "webp">();
-
-    for (const qr of qrFiles) {
-      const file = uploadedFile(formData, qr.field);
-      const removeCurrent = formData.get(qr.removeField) === "on";
-      if (file && removeCurrent) {
-        return { error: `Upload a replacement or remove the current ${qr.label} QR, not both.` };
-      }
-      if (file) {
-        const extension = await qrImageExtension(file);
-        if (!extension) {
-          return { error: `${qr.label} QR must be a valid PNG, JPG, or WebP image no larger than 5 MB.` };
-        }
-        fileExtensions.set(file, extension);
-      }
-      if (removeCurrent) resolvedPaths[qr.key] = null;
-      if (paymentMethods.includes(qr.method) && !file && (!resolvedPaths[qr.key] || removeCurrent)) {
-        return { error: `Upload the ${qr.label} QR image before enabling that payment method.` };
-      }
-    }
-
-    for (const qr of qrFiles) {
-      const file = uploadedFile(formData, qr.field);
-      const extension = file ? fileExtensions.get(file) : undefined;
-      if (!file || !extension) continue;
-      const path = `qrs/${qr.key}-${crypto.randomUUID()}.${extension}`;
-      let uploadError: { message: string } | null = null;
-      try {
-        const result = await supabase.storage
-          .from("payment-qrs")
-          .upload(path, file, {
-            cacheControl: "3600",
-            contentType: file.type,
-            upsert: false,
-          });
-        uploadError = result.error;
-      } catch {
-        await cleanupUploadedQrFiles();
-        return { error: `The ${qr.label} QR image could not be uploaded. Check storage setup and try again.` };
-      }
-      if (uploadError) {
-        await cleanupUploadedQrFiles();
-        return { error: `The ${qr.label} QR image could not be uploaded. Check storage setup and try again.` };
-      }
-      uploadedQrPaths.push(path);
-      resolvedPaths[qr.key] = path;
-    }
 
     patch = {
       minimum_order_cents: numericField("minimum_order_cents"),
@@ -469,8 +442,8 @@ export async function saveBusinessSettingsSectionAction(_state: ShopActionState,
       delivery_enabled: formData.get("delivery_enabled") === "on",
       delivery_areas: deliveryAreas.value,
       payment_methods: paymentMethods,
-      gcash_qr_image_path: resolvedPaths.gcash,
-      paymaya_qr_image_path: resolvedPaths.paymaya,
+      gcash_qr_image_path: currentSettings.gcash_qr_image_path,
+      paymaya_qr_image_path: currentSettings.paymaya_qr_image_path,
     };
   } else if (section === "reservations") {
     const reservationTypes = jsonField(formData, "reservation_types");
@@ -500,7 +473,6 @@ export async function saveBusinessSettingsSectionAction(_state: ShopActionState,
 
   const parsed = businessSettingsSchema.safeParse({ ...currentSettings, ...patch });
   if (!parsed.success) {
-    await cleanupUploadedQrFiles();
     return { error: parsed.error.issues[0]?.message ?? "Check the business settings." };
   }
   const { error } = await supabase.from("business_settings").upsert({
@@ -509,7 +481,6 @@ export async function saveBusinessSettingsSectionAction(_state: ShopActionState,
     updated_by: user.id,
   });
   if (error) {
-    await cleanupUploadedQrFiles();
     return { error: "Business settings could not be saved." };
   }
   clearBusinessSettingsCache();
@@ -521,20 +492,20 @@ export async function saveBusinessSettingsSectionAction(_state: ShopActionState,
 }
 
 export async function saveCategoryAction(_state: ShopActionState, formData: FormData): Promise<ShopActionState> {
-  const { supabase } = await requireUser("/admin/products");
-  const name = text(formData, "name").trim();
-  const slug = text(formData, "slug").trim();
-  if (name.length < 2 || name.length > 100 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
+  const { supabase } = await requireStaff(["administrator", "menu_manager"]);
+  const parsed = categorySchema.safeParse({
+    id: text(formData, "id") || undefined,
+    name: text(formData, "name"),
+    slug: text(formData, "slug"),
+    description: text(formData, "description"),
+    sort_order: text(formData, "sort_order"),
+    is_active: formData.get("is_active") === "on",
+  });
+  if (!parsed.success) {
     return { error: "Enter a category name and a lowercase hyphenated slug." };
   }
-  const id = text(formData, "id");
-  const values = {
-    name,
-    slug,
-    description: text(formData, "description").trim() || null,
-    sort_order: Math.max(0, Math.min(10_000, Number(text(formData, "sort_order")) || 0)),
-    is_active: formData.get("is_active") === "on",
-  };
+  const { id, ...parsedValues } = parsed.data;
+  const values = { ...parsedValues, description: parsedValues.description || null };
   const { error } = id
     ? await supabase.from("categories").update(values).eq("id", id)
     : await supabase.from("categories").insert(values);
@@ -543,6 +514,25 @@ export async function saveCategoryAction(_state: ShopActionState, formData: Form
   revalidatePath("/admin/products");
   clearMenuDataCache();
   return { success: id ? "Category updated." : "Category added." };
+}
+
+export async function deleteCategoryAction(_state: ShopActionState, formData: FormData): Promise<ShopActionState> {
+  const { supabase } = await requireStaff(["administrator", "menu_manager"]);
+  const categoryId = text(formData, "category_id");
+  if (!/^[0-9a-f-]{36}$/i.test(categoryId)) return { error: "Choose a valid category." };
+  const { data: category, error: loadError } = await supabase
+    .from("categories")
+    .select("id,name")
+    .eq("id", categoryId)
+    .maybeSingle();
+  if (loadError || !category) return { error: "That category could not be found." };
+  const { error } = await supabase.from("categories").delete().eq("id", categoryId);
+  if (error) return { error: "Category could not be deleted. Try again or contact an administrator." };
+  revalidatePath("/menu");
+  revalidatePath("/admin/products");
+  revalidatePath("/admin/products/categories");
+  clearMenuDataCache();
+  return { success: `${category.name} was deleted. Its products remain in the menu as uncategorized.` };
 }
 
 export async function saveVariantAction(_state: ShopActionState, formData: FormData): Promise<ShopActionState> {

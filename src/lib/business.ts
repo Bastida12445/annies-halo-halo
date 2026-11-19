@@ -256,7 +256,7 @@ export type BusinessSettings = {
   pickup_enabled: boolean;
   delivery_enabled: boolean;
   delivery_areas: DeliveryArea[];
-  payment_methods: Array<"cash_on_pickup" | "cash_on_delivery" | "paymongo" | "gcash_qr" | "paymaya_qr">;
+  payment_methods: Array<"cash_on_pickup" | "cash_on_delivery" | "paymongo">;
   paymongo_payment_methods: string[];
   gcash_qr_image_path: string | null;
   paymaya_qr_image_path: string | null;
@@ -329,9 +329,7 @@ export function parseBusinessSettings(value: Json | null | undefined): BusinessS
         (method): method is BusinessSettings["payment_methods"][number] =>
           method === "cash_on_pickup" ||
           method === "cash_on_delivery" ||
-          (method === "paymongo" && paymongoChannels.length > 0) ||
-          (method === "gcash_qr" && Boolean(gcashQrImagePath)) ||
-          (method === "paymaya_qr" && Boolean(paymayaQrImagePath)),
+          (method === "paymongo" && paymongoChannels.length > 0),
       )
     : defaults.payment_methods;
   const deliveryAreas = Array.isArray(source.delivery_areas)
